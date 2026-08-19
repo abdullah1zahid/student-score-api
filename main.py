@@ -1,18 +1,15 @@
-import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import joblib
-import pandas as pd
 from pydantic import BaseModel, Field
+import pandas as pd
+import joblib
 
-# 1. FastAPI App initialize karein
 app = FastAPI(
     title="Student Math Score Predictor API",
-    description="ML model for predicting student math scores based on demographic and academic features.",
-    version="1.1.0",
+    description="ML model for predicting student math scores",
+    version="1.0.0"
 )
 
-# 2. CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,94 +18,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Model load karein
-MODEL_FILE = "student_model.pkl"
+# Model Load
+model = joblib.load("student_model.pkl")
 
-if os.path.exists(MODEL_FILE):
-  model_pipeline = joblib.load(MODEL_FILE)
-else:
-  model_pipeline = None
-
-
-# 4. Pydantic Input Schema
 class StudentInput(BaseModel):
-  gender: str = Field(..., example="female")
-  race_ethnicity: str = Field(
-      ..., alias="race/ethnicity", example="group B"
-  )
-  parental_education: str = Field(
-      ..., alias="parental level of education", example="bachelor's degree"
-  )
-  lunch: str = Field(..., example="standard")
-  test_prep_course: str = Field(
-      ..., alias="test preparation course", example="none"
-  )
-  reading_score: float = Field(..., ge=0, le=100, example=72.0)
-  writing_score: float = Field(..., ge=0, le=100, example=74.0)
+    gender: str = Field(..., example="female")
+    race_ethnicity: str = Field(..., alias="race/ethnicity", example="group B")
+    parental_level_of_education: str = Field(..., alias="parental level of education", example="bachelor's degree")
+    lunch: str = Field(..., example="standard")
+    test_preparation_course: str = Field(..., alias="test preparation course", example="none")
+    reading_score: float = Field(..., example=72)
+    writing_score: float = Field(..., example=74)
 
-  class Config:
-    populate_by_name = True
+    class Config:
+        populate_by_name = True
 
-
-# 5. Root endpoint
 @app.get("/")
 def home():
-  return {
-      "status": "online",
-      "version": "1.1.0",
-      "message": "Student Score Predictor API is running successfully!",
-  }
+    return {"message": "API is working perfectly!"}
 
-
-# 6. Predict endpoint with Pass/Fail and Grade Logic
 @app.post("/predict")
 def predict_score(data: StudentInput):
-  if model_pipeline is None:
-    raise HTTPException(
-        status_code=500,
-        detail="Model file 'student_model.pkl' not found on server.",
-    )
+    try:
+        # 1. Raw input dictionary
+        input_dict = {
+            "gender": [data.gender],
+            "race/ethnicity": [data.race_ethnicity],
+            "parental level of education": [data.parental_level_of_education],
+            "lunch": [data.lunch],
+            "test preparation course": [data.test_preparation_course],
+            "reading score": [data.reading_score],
+            "writing score": [data.writing_score]
+        }
+        df = pd.DataFrame(input_dict)
 
-  # Input ko DataFrame mein convert karein
-  input_data = {
-      "gender": [data.gender],
-      "race/ethnicity": [data.race_ethnicity],
-      "parental level of education": [data.parental_education],
-      "lunch": [data.lunch],
-      "test preparation course": [data.test_prep_course],
-      "reading score": [data.reading_score],
-      "writing score": [data.writing_score],
-  }
-  df_input = pd.DataFrame(input_data)
+        # 2. Convert categories to One-Hot Encoding (Dummies)
+        df_encoded = pd.get_dummies(df)
 
-  try:
-    prediction = model_pipeline.predict(df_input)[0]
-    final_score = round(max(0, min(100, float(prediction))), 2)
+        # 3. Model ke feature names ke sath align karein
+        if hasattr(model, "feature_names_in_"):
+            df_encoded = df_encoded.reindex(columns=model.feature_names_in_, fill_value=0)
 
-    # Naya Logic: Pass/Fail aur Grade Calculation
-    result_status = "Pass" if final_score >= 50.0 else "Fail"
+        # 4. Predict
+        prediction = model.predict(df_encoded)[0]
+        score = round(float(prediction), 2)
 
-    if final_score >= 80.0:
-      grade = "A"
-    elif final_score >= 70.0:
-      grade = "B"
-    elif final_score >= 60.0:
-      grade = "C"
-    elif final_score >= 50.0:
-      grade = "D"
-    else:
-      grade = "F"
+        # 5. Logic
+        status = "Pass" if score >= 50 else "Fail"
+        if score >= 80:
+            grade = "A"
+        elif score >= 70:
+            grade = "B"
+        elif score >= 60:
+            grade = "C"
+        elif score >= 50:
+            grade = "D"
+        else:
+            grade = "F"
 
-    return {
-        "status": "success",
-        "predicted_math_score": final_score,
-        "result_status": result_status,
-        "grade": grade,
-        "inputs_received": {
-            "gender": data.gender,
-            "reading_score": data.reading_score,
-            "writing_score": data.writing_score,
-        },
-    }
-  except Exception as e:
-    raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
+        return {
+            "status": "success",
+            "predicted_math_score": score,
+            "result_status": status,
+            "grade": grade,
+            "inputs_received": {
+                "gender": data.gender,
+                "reading_score": data.reading_score,
+                "writing_score": data.writing_score
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
