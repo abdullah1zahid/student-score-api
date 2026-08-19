@@ -9,13 +9,13 @@ from pydantic import BaseModel, Field
 app = FastAPI(
     title="Student Math Score Predictor API",
     description="ML model for predicting student math scores based on demographic and academic features.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
-# 2. CORS Middleware (Lovable aur doosre web frontends se connect hone ke liye zaroori hai)
+# 2. CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Real apps mein frontend ka specific domain dete hain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,16 +50,17 @@ class StudentInput(BaseModel):
     populate_by_name = True
 
 
-# 5. Root endpoint (Health check ke liye)
+# 5. Root endpoint
 @app.get("/")
 def home():
   return {
       "status": "online",
+      "version": "1.1.0",
       "message": "Student Score Predictor API is running successfully!",
   }
 
 
-# 6. Predict endpoint
+# 6. Predict endpoint with Pass/Fail and Grade Logic
 @app.post("/predict")
 def predict_score(data: StudentInput):
   if model_pipeline is None:
@@ -84,9 +85,25 @@ def predict_score(data: StudentInput):
     prediction = model_pipeline.predict(df_input)[0]
     final_score = round(max(0, min(100, float(prediction))), 2)
 
+    # Naya Logic: Pass/Fail aur Grade Calculation
+    result_status = "Pass" if final_score >= 50.0 else "Fail"
+
+    if final_score >= 80.0:
+      grade = "A"
+    elif final_score >= 70.0:
+      grade = "B"
+    elif final_score >= 60.0:
+      grade = "C"
+    elif final_score >= 50.0:
+      grade = "D"
+    else:
+      grade = "F"
+
     return {
         "status": "success",
         "predicted_math_score": final_score,
+        "result_status": result_status,
+        "grade": grade,
         "inputs_received": {
             "gender": data.gender,
             "reading_score": data.reading_score,
